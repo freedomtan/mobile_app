@@ -107,6 +107,7 @@ TfLiteStatus TfliteBackend::ApplyDelegate(const std::string& delegate) {
     if (!accelerator_name.empty()) {
       options.accelerator_name = accelerator_name.c_str();
     }
+    options.allow_fp16 = true;
     delegate_ptr = tflite::evaluation::CreateNNAPIDelegate(options);
   }
 #endif
@@ -135,6 +136,9 @@ std::vector<void*> TfliteBackend::GetPredictedOutputs() {
         break;
       case kTfLiteFloat16:
         outputs.push_back(output_tensor->data.f16);
+        break;
+      case kTfLiteInt32:
+        outputs.push_back(output_tensor->data.i64);
         break;
       case kTfLiteInt64:
         outputs.push_back(output_tensor->data.i64);
