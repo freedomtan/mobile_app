@@ -138,7 +138,7 @@ std::vector<void*> TfliteBackend::GetPredictedOutputs() {
         outputs.push_back(output_tensor->data.f16);
         break;
       case kTfLiteInt32:
-        outputs.push_back(output_tensor->data.i64);
+        outputs.push_back(output_tensor->data.i32);
         break;
       case kTfLiteInt64:
         outputs.push_back(output_tensor->data.i64);
