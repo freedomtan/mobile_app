@@ -235,17 +235,16 @@ int Main(int argc, char* argv[]) {
     case DatasetConfig::ADE20K: {
       LOG(INFO) << "Using ADE20K dataset";
       std::string images_directory, ground_truth_directory;
-      int offset = 1, image_width = 512, image_height = 512;
+      int num_classes = 31;
+      int image_width = 512, image_height = 512;
       std::vector<Flag> dataset_flags{
           Flag::CreateFlag("images_directory", &images_directory,
                            "Path to ground truth images.", Flag::kRequired),
-          Flag::CreateFlag("offset", &offset,
-                           "The offset of the first meaningful class in the "
-                           "classification model.",
-                           Flag::kRequired),
           Flag::CreateFlag("ground_truth_directory", &ground_truth_directory,
                            "Path to the imagenet ground truth file.",
                            Flag::kRequired),
+          Flag::CreateFlag("num_class", &num_classes,
+                           "number of classes"),
           Flag::CreateFlag("image_width", &image_width,
                            "The width of the processed image."),
           Flag::CreateFlag("image_height", &image_height,
@@ -254,9 +253,8 @@ int Main(int argc, char* argv[]) {
           backend) {
         dataset.reset(new ADE20K(backend->GetInputFormat(),
                                    backend->GetOutputFormat(), images_directory,
-                                   ground_truth_directory, offset, image_width,
+                                   ground_truth_directory, num_classes, image_width,
                                    image_height));
-	// std::cout << "size: " << dataset.PerformanceSampleCount();
       }
       // Adds to flag_list for showing help.
       flag_list.insert(flag_list.end(), dataset_flags.begin(),

@@ -35,7 +35,7 @@ class ADE20K : public Dataset {
   // ADE20K dataset.
   ADE20K(const DataFormat& input_format, const DataFormat& output_format,
            const std::string& image_dir, const std::string& ground_truth_dir,
-           int offset, int image_width, int image_height);
+           int num_classes, int image_width, int image_height);
 
   // Returns the name of the dataset.
   const std::string& Name() const override { return name_; }
@@ -77,6 +77,17 @@ class ADE20K : public Dataset {
   // preprocessing_stage_ conducts preprocessing of images.
   std::unique_ptr<tflite::evaluation::ImagePreprocessingStage>
       preprocessing_stage_;
+
+  // number of classes
+  int num_classes_;
+
+  // image w, h
+  int image_width_, image_height_;
+
+  // accumulators for true positive, false positive, and false negative
+  std::vector<uint64_t> tp_acc_, fp_acc_, fn_acc_;
+
+  bool initialized_ = false;
 };
 
 }  // namespace mobile

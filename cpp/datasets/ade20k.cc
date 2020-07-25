@@ -33,7 +33,6 @@ limitations under the License.
 namespace mlperf {
 namespace mobile {
 namespace {
-// TODO(b/145480762) Remove this code when preprocessing code is refactored.
 inline TfLiteType DataType2TfType(DataType::Type type) {
   switch (type) {
     case DataType::Float32:
@@ -47,18 +46,17 @@ inline TfLiteType DataType2TfType(DataType::Type type) {
   }
   return kTfLiteNoType;
 }
-
-// Default cropping fraction value.
-const float kCroppingFraction = 0.875;
 }  // namespace
 
-ADE20K::ADE20K(const DataFormat& input_format,
-                   const DataFormat& output_format,
-                   const std::string& image_dir,
-                   const std::string& ground_truth_dir, int offset,
-                   int image_width, int image_height)
-    : Dataset(input_format, output_format) {
- if (input_format_.size() != 1 || output_format_.size() != 1) {
+ADE20K::ADE20K(const DataFormat& input_format, const DataFormat& output_format,
+               const std::string& image_dir,
+               const std::string& ground_truth_dir, int num_classes,
+               int image_width, int image_height)
+    : Dataset(input_format, output_format),
+      num_classes_(num_classes),
+      image_width_(image_width),
+      image_height_(image_height) {
+  if (input_format_.size() != 1 || output_format_.size() != 1) {
     LOG(FATAL) << "Imagenet only supports 1 input and 1 output";
     return;
   }
@@ -73,13 +71,20 @@ ADE20K::ADE20K(const DataFormat& input_format,
   samples_ =
       std::vector<std::vector<std::vector<uint8_t>*>>(image_list_.size());
   LOG(INFO) << "size: " << samples_.size();
+  // Finds all ground truth files under ground_truth_dir.
+  std::unordered_set<std::string> gt_exts{".raw"};
+  ret = tflite::evaluation::GetSortedFileNames(
+      tflite::evaluation::StripTrailingSlashes(ground_truth_dir),
+      &ground_truth_list_, gt_exts);
+  if (ret == kTfLiteError || ground_truth_list_.empty()) {
+    LOG(FATAL) << "Failed to list all the ground truth files in provided path";
+    return;
+  }
+  LOG(INFO) << "gt size: " << ground_truth_list_.size();
 
   // Prepares the preprocessing stage.
   tflite::evaluation::ImagePreprocessingConfigBuilder builder(
       "image_preprocessing", DataType2TfType(input_format_.at(0).type));
-  builder.AddResizingStep(image_width / kCroppingFraction,
-                          image_height / kCroppingFraction, true);
-  builder.AddCroppingStep(image_width, image_height, false);
   builder.AddDefaultNormalizationStep();
   preprocessing_stage_.reset(
       new tflite::evaluation::ImagePreprocessingStage(builder.build()));
@@ -113,10 +118,7 @@ void ADE20K::LoadSamplesToRam(const std::vector<QuerySampleIndex>& samples) {
 
 void ADE20K::UnloadSamplesFromRam(
     const std::vector<QuerySampleIndex>& samples) {
-
-  std::cout << "here: " << __func__ << "\n"; 
   for (QuerySampleIndex sample_idx : samples) {
-    std::cout << "sample_idx: " << sample_idx << "\n"; 
     for (std::vector<uint8_t>* v : samples_.at(sample_idx)) {
       delete v;
     }
@@ -124,24 +126,21 @@ void ADE20K::UnloadSamplesFromRam(
   }
 }
 
-std::vector<uint8_t> ADE20K::ProcessOutput(
-    const int sample_idx, const std::vector<void*>& outputs) {
-  std::cout << "here: " << __func__ << "\n"; 
-  std::cout << "sample_idx: " << sample_idx << "\n"; 
-
+std::vector<uint8_t> ADE20K::ProcessOutput(const int sample_idx,
+                                           const std::vector<void*>& outputs) {
   std::vector<uint64_t> tps, fps, fns;
-
-  std::ifstream stream("/tmp/whatever.raw", std::ios::in | std::ios::binary);
+  std::string filename = ground_truth_list_.at(sample_idx);
+  std::ifstream stream(filename, std::ios::in | std::ios::binary);
   std::vector<uint8_t> ground_truth_vector(
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
-#if 0
-  auto output = reinterpret_cast<const std::vector<int32_t*>>(outputs);
 
-  for (int c = 1; c < 32; c++) {
+  auto output = reinterpret_cast<int32_t*>(outputs[0]);
+
+  for (int c = 1; c <= num_classes_; c++) {
     uint64_t true_positive = 0, false_positive = 0, false_negative = 0;
 
-    for (int i = 0; i < (512 * 512 - 1); i++) {
+    for (int i = 0; i < (image_width_ * image_height_ - 1); i++) {
       auto p = (uint8_t)0x000000ff & output[i];
       auto g = ground_truth_vector[i];
 
@@ -150,7 +149,7 @@ std::vector<uint8_t> ADE20K::ProcessOutput(
         if (p == g) {
           true_positive++;
         } else if (p == c) {
-          if ((g > 0) && (g < 32)) false_positive++;
+          if ((g > 0) && (g <= num_classes_)) false_positive++;
         } else {
           false_negative++;
         }
@@ -161,19 +160,64 @@ std::vector<uint8_t> ADE20K::ProcessOutput(
     fps.push_back(false_positive);
     fns.push_back(false_negative);
   }
+
+  if (!initialized_) {
+    initialized_ = true;
+
+    for (int j = 0; j < num_classes_; j++) {
+      tp_acc_.push_back(tps[j]);
+      fp_acc_.push_back(fps[j]);
+      fn_acc_.push_back(fns[j]);
+    }
+  } else {
+    for (int j = 0; j < num_classes_; j++) {
+      tp_acc_[j] += tps[j];
+      fp_acc_[j] += fps[j];
+      fn_acc_[j] += fns[j];
+    }
+  }
+
+#if __DEBUG__
+  for (int j = 0; j < num_classes_; j++) {
+    LOG(INFO) << tp_acc_[j] << ", " << fp_acc_[j] << ", " << fn_acc_[j];
+    if (j < 30) std::cout << ", ";
+  }
+  LOG(INFO) << "\n";
+  for (int j = 0; j < num_classes_; j++) {
+    LOG(INFO) << "mIOU class " << j + 1 << ": "
+              << tp_acc_[j] * 1.0 / (tp_acc_[j] + fp_acc_[j] + fn_acc_[j])
+              << "\n";
+  }
 #endif
 
   return std::vector<uint8_t>();
 }
 
 float ADE20K::ComputeAccuracy() {
-    std::cout << "here: " << __func__ << "\n"; 
-  return 1.0;
+  float iou_sum = 0.0;
+  for (int j = 0; j < num_classes_; j++) {
+    auto iou = tp_acc_[j] * 1.0 / (tp_acc_[j] + fp_acc_[j] + fn_acc_[j]);
+#if __DEBUG__
+    LOG(INFO) << "IOU class " << j + 1 << ": " << tp_acc_[j] << ", "
+              << fp_acc_[j] << ", " << fn_acc_[j] << ", " << iou << "\n";
+#endif
+    iou_sum += iou;
+  }
+#if __DEBUG__
+  LOG(INFO) << "mIOU over_all: " << iou_sum / num_classes_ << "\n";
+#endif
+  return iou_sum / num_classes_;
 }
 
 std::string ADE20K::ComputeAccuracyString() {
-    std::cout << "here: " << __func__ << "\n"; 
-  return "whatever";
+  float result = ComputeAccuracy();
+  if (result == 0.0f) {
+    return std::string("N/A");
+  }
+  std::stringstream stream;
+  stream << std::fixed << std::setprecision(4) << result << " mIoU";
+
+  return stream.str();
 }
 
 }  // namespace mobile
