@@ -89,6 +89,8 @@ ADE20K::ADE20K(const DataFormat& input_format, const DataFormat& output_format,
   if (preprocessing_stage_->Init() != kTfLiteOk) {
     LOG(FATAL) << "Failed to init preprocessing stage";
   }
+
+  counted_ = std::vector<bool>(image_list_.size(), false);
 }
 
 void ADE20K::LoadSamplesToRam(const std::vector<QuerySampleIndex>& samples) {
@@ -129,68 +131,72 @@ std::vector<uint8_t> ADE20K::ProcessOutput(const int sample_idx,
   if (ground_truth_list_.empty()) {
     return std::vector<uint8_t>();
   }
-  std::vector<uint64_t> tps, fps, fns;
-  std::string filename = ground_truth_list_.at(sample_idx);
-  std::ifstream stream(filename, std::ios::in | std::ios::binary);
-  std::vector<uint8_t> ground_truth_vector(
-      (std::istreambuf_iterator<char>(stream)),
-      std::istreambuf_iterator<char>());
 
-  auto output = reinterpret_cast<int32_t*>(outputs[0]);
+  if (!counted_[sample_idx]) {
+    std::vector<uint64_t> tps, fps, fns;
+    std::string filename = ground_truth_list_.at(sample_idx);
+    std::ifstream stream(filename, std::ios::in | std::ios::binary);
+    std::vector<uint8_t> ground_truth_vector(
+        (std::istreambuf_iterator<char>(stream)),
+        std::istreambuf_iterator<char>());
 
-  for (int c = 1; c <= num_classes_; c++) {
-    uint64_t true_positive = 0, false_positive = 0, false_negative = 0;
+    auto output = reinterpret_cast<int32_t*>(outputs[0]);
 
-    for (int i = 0; i < (image_width_ * image_height_ - 1); i++) {
-      auto p = (uint8_t)0x000000ff & output[i];
-      auto g = ground_truth_vector[i];
+    for (int c = 1; c <= num_classes_; c++) {
+      uint64_t true_positive = 0, false_positive = 0, false_negative = 0;
 
-      // trichotomy
-      if ((p == c) or (g == c)) {
-        if (p == g) {
-          true_positive++;
-        } else if (p == c) {
-          if ((g > 0) && (g <= num_classes_)) false_positive++;
-        } else {
-          false_negative++;
+      for (int i = 0; i < (image_width_ * image_height_ - 1); i++) {
+        auto p = (uint8_t)0x000000ff & output[i];
+        auto g = ground_truth_vector[i];
+
+        // trichotomy
+        if ((p == c) or (g == c)) {
+          if (p == g) {
+            true_positive++;
+          } else if (p == c) {
+            if ((g > 0) && (g <= num_classes_)) false_positive++;
+          } else {
+            false_negative++;
+          }
         }
+      }
+
+      tps.push_back(true_positive);
+      fps.push_back(false_positive);
+      fns.push_back(false_negative);
+    }
+
+    if (!initialized_) {
+      initialized_ = true;
+
+      for (int j = 0; j < num_classes_; j++) {
+        tp_acc_.push_back(tps[j]);
+        fp_acc_.push_back(fps[j]);
+        fn_acc_.push_back(fns[j]);
+      }
+    } else {
+      for (int j = 0; j < num_classes_; j++) {
+        tp_acc_[j] += tps[j];
+        fp_acc_[j] += fps[j];
+        fn_acc_[j] += fns[j];
       }
     }
 
-    tps.push_back(true_positive);
-    fps.push_back(false_positive);
-    fns.push_back(false_negative);
-  }
-
-  if (!initialized_) {
-    initialized_ = true;
-
-    for (int j = 0; j < num_classes_; j++) {
-      tp_acc_.push_back(tps[j]);
-      fp_acc_.push_back(fps[j]);
-      fn_acc_.push_back(fns[j]);
-    }
-  } else {
-    for (int j = 0; j < num_classes_; j++) {
-      tp_acc_[j] += tps[j];
-      fp_acc_[j] += fps[j];
-      fn_acc_[j] += fns[j];
-    }
-  }
-
 #if __DEBUG__
-  for (int j = 0; j < num_classes_; j++) {
-    LOG(INFO) << tp_acc_[j] << ", " << fp_acc_[j] << ", " << fn_acc_[j];
-    if (j < 30) std::cout << ", ";
-  }
-  LOG(INFO) << "\n";
-  for (int j = 0; j < num_classes_; j++) {
-    LOG(INFO) << "mIOU class " << j + 1 << ": "
-              << tp_acc_[j] * 1.0 / (tp_acc_[j] + fp_acc_[j] + fn_acc_[j])
-              << "\n";
-  }
+    for (int j = 0; j < num_classes_; j++) {
+      LOG(INFO) << tp_acc_[j] << ", " << fp_acc_[j] << ", " << fn_acc_[j];
+      if (j < 30) std::cout << ", ";
+    }
+    LOG(INFO) << "\n";
+    for (int j = 0; j < num_classes_; j++) {
+      LOG(INFO) << "mIOU class " << j + 1 << ": "
+                << tp_acc_[j] * 1.0 / (tp_acc_[j] + fp_acc_[j] + fn_acc_[j])
+                << "\n";
+    }
 #endif
 
+    counted_[sample_idx] = true;
+  }
   return std::vector<uint8_t>();
 }
 
