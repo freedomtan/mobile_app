@@ -91,8 +91,6 @@ class ADE20K : public Dataset {
   // Accumulators for true positive, false positive, and false negative.
   std::vector<uint64_t> tp_acc_, fp_acc_, fn_acc_;
 
-  bool initialized_ = false;
-
   // sample counted or not
   std::vector<bool> counted_;
 };
