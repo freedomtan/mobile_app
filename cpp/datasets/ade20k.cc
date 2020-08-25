@@ -91,6 +91,12 @@ ADE20K::ADE20K(const DataFormat& input_format, const DataFormat& output_format,
   }
 
   counted_ = std::vector<bool>(image_list_.size(), false);
+
+  for (int j = 0; j < num_classes_; j++) {
+      tp_acc_.push_back(0);
+      fp_acc_.push_back(0);
+      fn_acc_.push_back(0);
+  }
 }
 
 void ADE20K::LoadSamplesToRam(const std::vector<QuerySampleIndex>& samples) {
@@ -166,20 +172,10 @@ std::vector<uint8_t> ADE20K::ProcessOutput(const int sample_idx,
       fns.push_back(false_negative);
     }
 
-    if (!initialized_) {
-      initialized_ = true;
-
-      for (int j = 0; j < num_classes_; j++) {
-        tp_acc_.push_back(tps[j]);
-        fp_acc_.push_back(fps[j]);
-        fn_acc_.push_back(fns[j]);
-      }
-    } else {
-      for (int j = 0; j < num_classes_; j++) {
-        tp_acc_[j] += tps[j];
-        fp_acc_[j] += fps[j];
-        fn_acc_[j] += fns[j];
-      }
+    for (int j = 0; j < num_classes_; j++) {
+      tp_acc_[j] += tps[j];
+      fp_acc_[j] += fps[j];
+      fn_acc_[j] += fns[j];
     }
 
 #if __DEBUG__
