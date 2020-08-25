@@ -138,7 +138,6 @@ std::vector<uint8_t> ADE20K::ProcessOutput(const int sample_idx,
   }
 
   if (!counted_[sample_idx]) {
-    std::vector<uint64_t> tps, fps, fns;
     std::string filename = ground_truth_list_.at(sample_idx);
     std::ifstream stream(filename, std::ios::in | std::ios::binary);
     std::vector<uint8_t> ground_truth_vector(
